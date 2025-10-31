@@ -1,0 +1,119 @@
+services:
+  # Redis - Cola de mensajes para votos
+  redis:
+    image: redis:7-alpine
+    container_name: roxs-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - voting-network
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Vote App - Frontend de votación (Flask/Python)
+  vote:
+    build:
+      context: ./roxs-voting-app/vote
+      dockerfile: Dockerfile
+    container_name: roxs-vote
+    ports:
+      - "5000:80"
+    environment:
+      REDIS_HOST: redis
+      # Conectar a PostgreSQL en la máquina host
+      DATABASE_HOST: host.docker.internal
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_NAME: ${DATABASE_NAME:-votes}
+      OPTION_A: "Cats"
+      OPTION_B: "Dogs"
+    networks:
+      - voting-network
+    extra_hosts:
+      # Permite que los contenedores accedan a servicios del host
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # Worker - Procesador de votos (Node.js)
+  worker:
+    build:
+      context: ./roxs-voting-app/worker
+      dockerfile: Dockerfile
+    container_name: roxs-worker
+    ports:
+      - "3001:3000"
+    environment:
+      REDIS_HOST: redis
+      # Conectar a PostgreSQL en la máquina host
+      DATABASE_HOST: host.docker.internal
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_NAME: ${DATABASE_NAME:-votes}
+    networks:
+      - voting-network
+    extra_hosts:
+      # Permite que los contenedores accedan a servicios del host
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # Result App - Visualización de resultados (Node.js)
+  result:
+    build:
+      context: ./roxs-voting-app/result
+      dockerfile: Dockerfile
+    container_name: roxs-result
+    ports:
+      - "5001:3000"
+    environment:
+      # Conectar a PostgreSQL en la máquina host
+      DATABASE_HOST: host.docker.internal
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_NAME: ${DATABASE_NAME:-votes}
+      APP_PORT: 3000
+    networks:
+      - voting-network
+    extra_hosts:
+      # Permite que los contenedores accedan a servicios del host
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  voting-network:
+    driver: bridge
+    name: roxs-voting-network
+
+volumes:
+  redis-data:
+    name: roxs-redis-data
